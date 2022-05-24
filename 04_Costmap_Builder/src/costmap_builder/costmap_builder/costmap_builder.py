@@ -11,8 +11,10 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 import numpy as np
-
 from .utils import ros_point_cloud_to_numpy_point_cloud, transformation_stamped_to_transformation_matrix
+
+from sklearn.neighbors import BallTree
+
 
 class CostmapBuilder(Node):
     COSTMAP_RANGE = 10  # meters
@@ -47,18 +49,28 @@ class CostmapBuilder(Node):
 
     def _transform_pcd(self, pcd: np.ndarray, transform: TransformStamped):
         M = transformation_stamped_to_transformation_matrix(transform)
-        self.get_logger().info("Transform: %s" % (str(M)))
+        self.get_logger().info("Transform: %s" % (str(M.shape)))
 
-        # TODO: Implement Rotation and Translation for PCD using transform
+        #extend pcd to dimension(1,4) for correct multiply
+        pcd = np.lib.pad(pcd, (0,1), 'constant', constant_values=(1)) 
+        pcd = M @ pcd.T
+        pcd = pcd.T
+        pcd = np.delete(pcd, 3, 1)
 
         return pcd
 
     def _filter_pcd(self, pcd: np.ndarray):
 
-        # TODO: Add k-means to filter snow
-        # TODO: Remove close to the ground points
-        # For example, remove all points outside of Z interval [0.3, 2] meters
+        # Remove close to the ground points outside of Z interval [0.3, 2] meters
+        z_min, z_max = 0.3, 2
+        pcd = np.delete(pcd, np.where((pcd[:, 2] >= z_max) | (pcd[:, 2] <= z_min))[0], axis=0)
 
+        # Add k-means to filter snow
+        tree = BallTree(pcd, leaf_size=2)              
+        ind = tree.query_radius(pcd, r=0.3, count_only=True) # indices of neighbors within distance 0.3
+        thresh = 10 # amount of snow points
+        pcd =pcd[ind > thresh]
+        #self.get_logger().info("ind: %s" % (str(ind)))
         return pcd
 
     def listener_callback(self, msg: PointCloud2):
